@@ -1,0 +1,13 @@
+{
+  "name": "telegram-bot",
+  "private": true,
+  "scripts": {
+    "dev": "node index.js"
+  },
+  "dependencies": {
+    "@prisma/client": "latest",
+    "dotenv": "latest",
+    "express": "latest",
+    "telegraf": "latest"
+  }
+}

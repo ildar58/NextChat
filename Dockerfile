@@ -1,68 +1,19 @@
-FROM node:18-alpine AS base
-
-FROM base AS deps
-
-RUN apk add --no-cache libc6-compat
-
+FROM node:20-alpine AS deps
 WORKDIR /app
+COPY package.json pnpm-lock.yaml ./
+RUN npm i -g pnpm && pnpm install --frozen-lockfile
 
-COPY package.json yarn.lock ./
-
-RUN yarn config set registry 'https://registry.npmmirror.com/'
-RUN yarn install
-
-FROM base AS builder
-
-RUN apk update && apk add --no-cache git
-
-ENV OPENAI_API_KEY=""
-ENV GOOGLE_API_KEY=""
-ENV CODE=""
-
+FROM node:20-alpine AS builder
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
+RUN pnpm dlx prisma generate
+RUN pnpm build
 
-RUN yarn build
-
-FROM base AS runner
+FROM node:20-alpine
 WORKDIR /app
-
-RUN apk add proxychains-ng
-
-ENV PROXY_URL=""
-ENV OPENAI_API_KEY=""
-ENV GOOGLE_API_KEY=""
-ENV CODE=""
-ENV ENABLE_MCP=""
-
-COPY --from=builder /app/public ./public
-COPY --from=builder /app/.next/standalone ./
-COPY --from=builder /app/.next/static ./.next/static
-COPY --from=builder /app/.next/server ./.next/server
-
-RUN mkdir -p /app/app/mcp && chmod 777 /app/app/mcp
-COPY --from=builder /app/app/mcp/mcp_config.default.json /app/app/mcp/mcp_config.json
-
-EXPOSE 3000
-
-CMD if [ -n "$PROXY_URL" ]; then \
-    export HOSTNAME="0.0.0.0"; \
-    protocol=$(echo $PROXY_URL | cut -d: -f1); \
-    host=$(echo $PROXY_URL | cut -d/ -f3 | cut -d: -f1); \
-    port=$(echo $PROXY_URL | cut -d: -f3); \
-    conf=/etc/proxychains.conf; \
-    echo "strict_chain" > $conf; \
-    echo "proxy_dns" >> $conf; \
-    echo "remote_dns_subnet 224" >> $conf; \
-    echo "tcp_read_time_out 15000" >> $conf; \
-    echo "tcp_connect_time_out 8000" >> $conf; \
-    echo "localnet 127.0.0.0/255.0.0.0" >> $conf; \
-    echo "localnet ::1/128" >> $conf; \
-    echo "[ProxyList]" >> $conf; \
-    echo "$protocol $host $port" >> $conf; \
-    cat /etc/proxychains.conf; \
-    proxychains -f $conf node server.js; \
-    else \
-    node server.js; \
-    fi
+ENV NODE_ENV=production
+COPY --from=builder /app/.next ./.next
+COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder /app/package.json ./
+CMD ["pnpm","start"]
