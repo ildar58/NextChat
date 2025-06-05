@@ -1,0 +1,48 @@
+name: CI-CD
+on: { push: { branches: [main] }, pull_request: { branches: [main] } }
+env:
+  REGISTRY: ghcr.io
+  IMAGE_OWNER: ${{ github.repository_owner }}
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v3
+        with:
+          node-version: 20
+          cache: pnpm
+      - run: npm i -g pnpm
+      - run: pnpm install
+      - run: pnpm test:ci || true
+
+  docker:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v3
+        with:
+          node-version: 20
+      - run: echo ${{ secrets.GHCR_TOKEN }} | docker login ${{ env.REGISTRY }} -u ${{ github.actor }} --password-stdin
+      - run: docker build -t $REGISTRY/$IMAGE_OWNER/nextchat:latest .
+      - run: docker push $REGISTRY/$IMAGE_OWNER/nextchat:latest
+      - run: docker build -f Dockerfile.bot -t $REGISTRY/$IMAGE_OWNER/nextchat-telegram:latest .
+      - run: docker push $REGISTRY/$IMAGE_OWNER/nextchat-telegram:latest
+
+  deploy:
+    if: github.ref == 'refs/heads/main'
+    needs: docker
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy over SSH
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          port: ${{ secrets.SSH_PORT }}
+          key: ${{ secrets.SSH_KEY }}
+          script: |
+            docker compose pull
+            docker compose up -d
